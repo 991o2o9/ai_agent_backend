@@ -43,6 +43,10 @@ class DialogueRequest(BaseModel):
     message: str
     session_id: Optional[int] = None
 
+class DialogueRequestAPI(BaseModel):
+    message: str
+    session_id: Optional[int] = None
+
 class DialogueResponse(BaseModel):
     npc_response: str
     npc_info: dict

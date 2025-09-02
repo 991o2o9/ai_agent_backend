@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import async_session_maker
 from app.services.npc_service import NPCService
-from app.schemas.npc import NPC, NPCCreate, NpcReplica, DialogueRequest, DialogueResponse
+from app.schemas.npc import NPC, NPCCreate, NpcReplica, DialogueRequest, DialogueRequestAPI, DialogueResponse
 from app.api.users import get_current_user
 from app.schemas.user import User
 from typing import List, Optional
@@ -64,24 +64,41 @@ async def create_npc(
 @router.post("/{npc_id}/dialogue")
 async def start_dialogue(
     npc_id: int,
-    dialogue_request: DialogueRequest,
+    dialogue_request: DialogueRequestAPI,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Start dialogue with NPC"""
     npc_service = NPCService(db)
     
-    # Set npc_id from URL
-    dialogue_request.npc_id = npc_id
+    # Create DialogueRequest with npc_id from URL
+    from app.schemas.npc import DialogueRequest
+    full_dialogue_request = DialogueRequest(
+        npc_id=npc_id,
+        message=dialogue_request.message,
+        session_id=dialogue_request.session_id
+    )
     
     try:
-        result = await npc_service.process_dialogue(dialogue_request)
+        result = await npc_service.process_dialogue(full_dialogue_request, current_user.id)
         return result
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
+        error_message = str(e)
+        if "Rate limit exceeded" in error_message:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=error_message
+            )
+        elif "AI service unavailable" in error_message:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=error_message
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message
+            )
 
 @router.get("/{npc_id}/memory")
 async def get_npc_memory(

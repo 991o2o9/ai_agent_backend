@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, ForeignKey, Text
+from sqlalchemy import Column, Integer, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from app.core.db import Base
 
@@ -7,6 +7,6 @@ class GameSession(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
-    progress = Column(Text, default="{}")
+    progress = Column(JSON, default=dict)
 
     user = relationship("User", back_populates="sessions")

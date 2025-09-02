@@ -12,3 +12,4 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     sessions = relationship("GameSession", back_populates="user", cascade="all, delete")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete")

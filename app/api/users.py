@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import async_session_maker
 from app.services.user_service import UserService
-from app.schemas.user import UserCreate, UserLogin, User, Token
+from app.schemas.user import UserCreate, UserLogin, User, Token, RefreshTokenRequest
 from app.core.security import verify_token
 from typing import Annotated
 
@@ -69,6 +69,65 @@ async def login_user(
         )
     
     return result
+
+@router.post("/refresh", response_model=Token)
+async def refresh_token(
+    refresh_data: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Refresh access token using refresh token"""
+    try:
+        user_service = UserService(db)
+        result = await user_service.refresh_access_token(refresh_data.refresh_token)
+        
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired refresh token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        return result
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log the error and return a generic error
+        print(f"Error in refresh_token endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+@router.post("/logout")
+async def logout_user(
+    refresh_data: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Logout user by revoking refresh token"""
+    user_service = UserService(db)
+    success = await user_service.revoke_refresh_token(refresh_data.refresh_token)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid refresh token"
+        )
+    
+    return {"message": "Successfully logged out"}
+
+@router.post("/logout-all")
+async def logout_all_devices(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Logout user from all devices by revoking all refresh tokens"""
+    user_service = UserService(db)
+    count = await user_service.logout_user(current_user.id)
+    
+    return {"message": f"Logged out from {count} devices"}
 
 @router.get("/me", response_model=User)
 async def get_current_user_info(

@@ -2,13 +2,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.npc_repo import NPCRepository, NpcReplicaRepository
 from app.schemas.npc import NPCCreate, NpcReplicaCreate, DialogueRequest
 from app.core.redis import redis
+from app.services.ai_service import AIService
 from typing import List, Optional, Dict, Any
 import json
+from datetime import datetime
 
 class NPCService:
     def __init__(self, session: AsyncSession):
         self.npc_repo = NPCRepository(session)
         self.replica_repo = NpcReplicaRepository(session)
+        self.ai_service = AIService()
 
     async def create_npc(self, npc_data: NPCCreate) -> dict:
         return await self.npc_repo.create_npc(npc_data)
@@ -51,11 +54,15 @@ class NPCService:
         
         await redis.set(memory_key, json.dumps(current_memory), ex=3600)  # TTL 1 hour
 
-    async def process_dialogue(self, dialogue_request: DialogueRequest) -> dict:
-        """Handle NPC dialogue"""
+    async def process_dialogue(self, dialogue_request: DialogueRequest, user_id: int = None) -> dict:
+        """Handle NPC dialogue with AI integration"""
         npc = await self.get_npc(dialogue_request.npc_id)
         if not npc:
             raise ValueError("NPC not found")
+        
+        # Check rate limits if user_id is provided
+        if user_id and not await self.ai_service.rate_limit_check(user_id):
+            raise ValueError("Rate limit exceeded. Please wait before sending another message.")
         
         # Save player's message
         player_replica = NpcReplicaCreate(
@@ -66,22 +73,44 @@ class NPCService:
         )
         await self.replica_repo.create_replica(player_replica)
         
-        # Get NPC memory
-        npc_memory = await self.get_npc_memory(dialogue_request.npc_id, dialogue_request.session_id)
+        # Update short-term memory
+        session_key = str(dialogue_request.session_id) if dialogue_request.session_id else "global"
+        await self.ai_service.update_short_term_memory(
+            session_key, 
+            dialogue_request.npc_id, 
+            dialogue_request.message, 
+            True
+        )
         
-        # Get dialogue history
-        dialogue_history = await self.replica_repo.get_npc_dialogue_history(
+        # Get short-term memory for context
+        short_memory = await self.ai_service.get_short_term_memory(
+            session_key, 
+            dialogue_request.npc_id
+        )
+        
+        # Get long-term memory (dialogue history)
+        long_memory = await self.replica_repo.get_npc_dialogue_history(
             dialogue_request.npc_id, 
             dialogue_request.session_id
         )
         
-        # Generate NPC response (placeholder: should be integrated with AI)
-        npc_response = await self._generate_npc_response(
-            npc, 
-            dialogue_request.message, 
-            npc_memory, 
-            dialogue_history
-        )
+        # Build personality string
+        personality = f"{npc.character_type} - {npc.description}"
+        if npc.personality_traits:
+            personality += f". Traits: {', '.join(npc.personality_traits)}"
+        if npc.problems:
+            personality += f". Problems: {', '.join(npc.problems)}"
+        
+        try:
+            # Generate AI response
+            npc_response = await self.ai_service.generate_response(
+                prompt=dialogue_request.message,
+                context=short_memory,
+                npc_personality=personality
+            )
+        except Exception as ai_error:
+            # If AI fails, we can't continue - this is a hackathon requirement
+            raise ValueError(f"AI service unavailable: {str(ai_error)}")
         
         # Save NPC response
         npc_replica = NpcReplicaCreate(
@@ -92,61 +121,28 @@ class NPCService:
         )
         await self.replica_repo.create_replica(npc_replica)
         
-        # Update NPC memory
+        # Update short-term memory with NPC response
+        await self.ai_service.update_short_term_memory(
+            session_key, 
+            dialogue_request.npc_id, 
+            npc_response, 
+            False
+        )
+        
+        # Update long-term memory in database
         memory_entry = {
             "player_message": dialogue_request.message,
             "npc_response": npc_response,
-            "timestamp": str(dialogue_request.npc_id)  # Should be a real timestamp in production
+            "timestamp": datetime.utcnow().isoformat()
         }
         await self.save_npc_memory(dialogue_request.npc_id, memory_entry, dialogue_request.session_id)
         
         return {
             "npc_response": npc_response,
             "npc_info": npc,
-            "memory_updated": True
+            "memory_updated": True,
+            "ai_generated": True
         }
-
-    async def _generate_npc_response(self, npc: dict, player_message: str, memory: List[dict], history: List[dict]) -> str:
-        """Generate NPC response based on character type and context"""
-        # Very simplified version. Should be integrated with an LLM in real project.
-        
-        character_responses = {
-            "worker": {
-                "greeting": "Hey... I'm tired after my shift. What do you want?",
-                "problems": "I work for peanuts, the boss treats me badly. Living in a dorm with ten people.",
-                "default": "I don’t know... maybe you’re right. But what can I do?"
-            },
-            "entrepreneur": {
-                "greeting": "Welcome! I'm always open to new business opportunities.",
-                "problems": "Bureaucracy is killing us! Taxes are rising, no support at all. Corruption everywhere.",
-                "default": "Interesting idea... But I need to think about risks and profit."
-            },
-            "activist": {
-                "greeting": "Hi! Do you also care about our city's environment?",
-                "problems": "Air is toxic, rivers are polluted! Authorities don’t do anything!",
-                "default": "We must act! Protests, rallies – that’s the only way to change things!"
-            },
-            "pensioner": {
-                "greeting": "Hello, young one. How are you?",
-                "problems": "The pension is too small, medicines are expensive. Doctors don’t treat, they harm.",
-                "default": "In my time things were different... But maybe you’re right about the future."
-            },
-            "official": {
-                "greeting": "Welcome. How can I help?",
-                "problems": "It’s hard to balance everyone’s interests. Every decision upsets someone.",
-                "default": "This requires careful consideration. We must take everything into account."
-            }
-        }
-        
-        # Simple response selection logic
-        message_lower = player_message.lower()
-        
-        if any(word in message_lower for word in ["hi", "hello", "welcome"]):
-            return character_responses[npc["character_type"]]["greeting"]
-        elif any(word in message_lower for word in ["problem", "what happened", "how are you"]):
-            return character_responses[npc["character_type"]]["problems"]
-        else:
-            return character_responses[npc["character_type"]]["default"]
 
     async def initialize_default_npcs(self):
         """Initialize default NPCs for the game"""

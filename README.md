@@ -111,8 +111,7 @@ git clone <repository-url>
 cd ai_agent_backend
 
 # 2. Environment setup
-cp .env.example .env
-# Edit .env with your configuration
+# Create .env file with your configuration (see Configuration section below)
 
 # 3. Launch all services
 docker-compose up -d
@@ -200,21 +199,44 @@ ai_agent_backend/
 Create a `.env` file in the root directory:
 
 ```env
-# 🗄️ Database Configuration
-DATABASE_URL=postgresql://postgres:postgres@localhost:5434/npc_game
+# Database Configuration
+DATABASE_URL=postgresql://username:password@localhost:5432/npc_game_db
+REDIS_URL=redis://localhost:6379/0
 
-# 🔴 Redis Configuration
-REDIS_URL=redis://localhost:6380
-
-# 🔐 Security Settings
-SECRET_KEY=your-super-secret-key-here
+# Security Configuration
+SECRET_KEY=your-super-secret-key-here-change-this-in-production
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
-# 🌍 Environment Settings
-ENVIRONMENT=development
-DEBUG=true
+# Hugging Face Configuration (Required for AI NPC responses)
+HUGGINGFACE_API_TOKEN=your-huggingface-api-token-here
+HUGGINGFACE_MODEL=mistralai/Mistral-7B-Instruct-v0.2
+HUGGINGFACE_MODEL_PROVIDER=featherless-ai
+
+# AI API Endpoints (optional - these have sensible defaults)
+HUGGINGFACE_CHAT_API_URL=https://router.huggingface.co/v1/chat/completions
+HUGGINGFACE_INFERENCE_API_URL=https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2
+
+# AI Generation Settings
+MAX_TOKENS=512
+TEMPERATURE=0.7
+TOP_P=0.9
+AI_TIMEOUT=30
+
+# Memory Settings
+SHORT_MEMORY_TTL=3600
+LONG_MEMORY_LIMIT=100
+
+# Rate Limiting
+MAX_REQUESTS_PER_MINUTE=60
+MAX_REQUESTS_PER_HOUR=1000
 ```
+
+**Important Security Notes:**
+- 🔐 Never commit your `.env` file to version control
+- 🔑 Generate a strong, unique `SECRET_KEY` for production
+- 🎫 Get your Hugging Face API token from [Hugging Face Settings](https://huggingface.co/settings/tokens)
+- 🌍 In production, use environment variables instead of `.env` files
 
 ## 📚 API Documentation
 
